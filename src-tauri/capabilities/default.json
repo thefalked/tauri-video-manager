@@ -1,0 +1,200 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-capability",
+  "description": "Capability for the main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    {
+      "identifier": "fs:read-dirs",
+      "allow": [
+        {
+          "path": "$DOWNLOAD/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:read-files",
+      "allow": [
+        {
+          "path": "$DOWNLOAD/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:read-meta",
+      "allow": [
+        {
+          "path": "$DOWNLOAD/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [
+        {
+          "path": "$DOWNLOAD/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [
+        {
+          "path": "$DOWNLOAD/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-remove",
+      "allow": [
+        {
+          "path": "$DOWNLOAD/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-watch",
+      "allow": [
+        {
+          "path": "$DOWNLOAD/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-unwatch",
+      "allow": [
+        {
+          "path": "$DOWNLOAD/**"
+        }
+      ]
+    },
+    "dialog:default",
+    "store:default",
+    "shell:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "ffmpeg-convert",
+          "cmd": "ffmpeg",
+          "args": [
+            "-i",
+            {
+              "validator": "^.+$"
+            },
+            "-map",
+            "0:v",
+            "-map",
+            "0:a",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "copy",
+            "-strict",
+            "unofficial",
+            {
+              "validator": "^.+$"
+            }
+          ]
+        },
+        {
+          "name": "ffmpeg-extract-subtitle",
+          "cmd": "ffmpeg",
+          "args": [
+            "-i",
+            {
+              "validator": "^.+$"
+            },
+            "-map",
+            {
+              "validator": "^0:s:[0-9]+$"
+            },
+            "-c:s",
+            "srt",
+            {
+              "validator": "^.+\\.srt$"
+            }
+          ]
+        },
+        {
+          "name": "ffmpeg-extract-bitmap-subtitle",
+          "cmd": "ffmpeg",
+          "args": [
+            "-i",
+            {
+              "validator": "^.+$"
+            },
+            "-map",
+            {
+              "validator": "^0:s:[0-9]+$"
+            },
+            "-filter:s",
+            {
+              "validator": "^tesseract=lang=eng$"
+            },
+            "-f",
+            "srt",
+            {
+              "validator": "^.+\\.srt$"
+            }
+          ]
+        },
+        {
+          "name": "ffmpeg-convert-sup",
+          "cmd": "ffmpeg",
+          "args": [
+            "-i",
+            {
+              "validator": "^.+\\.sup$"
+            },
+            "-c:s",
+            "srt",
+            {
+              "validator": "^.+\\.srt$"
+            }
+          ]
+        },
+        {
+          "name": "ffprobe",
+          "cmd": "ffprobe",
+          "args": [
+            "-v",
+            "error",
+            "-select_streams",
+            "s",
+            "-show_entries",
+            "stream=index:stream_tags=language",
+            "-of",
+            "csv=p=0",
+            "-i",
+            {
+              "validator": "^.+$"
+            }
+          ]
+        },
+        {
+          "name": "ffprobe-codec",
+          "cmd": "ffprobe",
+          "args": [
+            "-v",
+            "error",
+            "-select_streams",
+            {
+              "validator": "^s:[0-9]+$"
+            },
+            "-show_entries",
+            "stream=codec_name",
+            "-of",
+            "csv=p=0",
+            "-i",
+            {
+              "validator": "^.+$"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
