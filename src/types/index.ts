@@ -43,6 +43,6 @@ export interface FileContextType {
   toggleSubtitleInfo: (file: FileWithPath) => Promise<void>;
   toggleFileSelection: (file: FileWithPath) => void;
   handleFolderClick: (folderPath: string) => Promise<void>;
-  extractSubtitle: (file: FileWithPath, track: SubtitleTrack) => Promise<void>;
+  handleExtractSubtitle: (file: FileWithPath, track: SubtitleTrack) => Promise<void>;
   translateSubtitle: (subtitlePath: string) => Promise<void>;
 } 

@@ -119,29 +119,6 @@
           ]
         },
         {
-          "name": "ffmpeg-extract-bitmap-subtitle",
-          "cmd": "ffmpeg",
-          "args": [
-            "-i",
-            {
-              "validator": "^.+$"
-            },
-            "-map",
-            {
-              "validator": "^0:s:[0-9]+$"
-            },
-            "-filter:s",
-            {
-              "validator": "^tesseract=lang=eng$"
-            },
-            "-f",
-            "srt",
-            {
-              "validator": "^.+\\.srt$"
-            }
-          ]
-        },
-        {
           "name": "ffmpeg-convert-sup",
           "cmd": "ffmpeg",
           "args": [
@@ -149,6 +126,8 @@
             {
               "validator": "^.+\\.sup$"
             },
+            "-filter:s",
+            "tesseract=lang=eng",
             "-c:s",
             "srt",
             {
@@ -165,10 +144,9 @@
             "-select_streams",
             "s",
             "-show_entries",
-            "stream=index:stream_tags=language",
+            "stream=index:stream_tags=language,title,handler_name,forced",
             "-of",
             "csv=p=0",
-            "-i",
             {
               "validator": "^.+$"
             }
@@ -188,7 +166,6 @@
             "stream=codec_name",
             "-of",
             "csv=p=0",
-            "-i",
             {
               "validator": "^.+$"
             }

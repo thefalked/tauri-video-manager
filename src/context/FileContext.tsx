@@ -21,8 +21,8 @@ import {
 import {
   getSubtitleInfo,
   getSubtitleCodec,
-  extractBitmapSubtitle,
-  extractTextSubtitle,
+  extractSubtitle,
+  isUnsupportedSubtitleCodec,
 } from "../utils/ffmpeg";
 
 // Initialize Ollama client
@@ -43,17 +43,6 @@ export const FileProvider: React.FC<{ children: React.ReactNode }> = ({
   >({});
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [isBatchConverting, setIsBatchConverting] = useState(false);
-
-  // Helper functions
-  const isVideoFile = (fileName: string) => {
-    const videoExtensions = [".mp4", ".mkv"];
-    return videoExtensions.some((ext) => fileName.toLowerCase().endsWith(ext));
-  };
-
-  const isDisplayableFile = (entry: DirEntry) => {
-    const name = entry.name || "";
-    return entry.isDirectory || isVideoFile(name);
-  };
 
   const checkForMP4 = async (mkvPath: string): Promise<boolean> => {
     const mp4Path = mkvPath.replace(".mkv", ".mp4");
@@ -347,11 +336,16 @@ export const FileProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const toggleSubtitleInfo = async (file: FileWithPath) => {
-    if (!file.subtitleInfo) {
-      file.subtitleInfo = await getSubtitleInfo(file);
+    try {
+      if (!file.subtitleInfo) {
+        file.subtitleInfo = await getSubtitleInfo(file);
+      }
+      file.showSubtitleInfo = !file.showSubtitleInfo;
+      setRootFiles([...rootFiles]); // Force re-render
+    } catch (error) {
+      console.error("Error toggling subtitle info:", error);
+      toast.error("Error getting subtitle information");
     }
-    file.showSubtitleInfo = !file.showSubtitleInfo;
-    setRootFiles([...rootFiles]);
   };
 
   const toggleFileSelection = (file: FileWithPath) => {
@@ -387,42 +381,31 @@ export const FileProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
-  const extractSubtitle = async (file: FileWithPath, track: SubtitleTrack) => {
+  const handleExtractSubtitle = async (
+    file: FileWithPath,
+    track: SubtitleTrack
+  ) => {
     const toastId = toast.loading(`Extracting ${track.language} subtitle...`);
 
     try {
       const codecName = await getSubtitleCodec(file, track);
-      console.log("Subtitle codec:", codecName);
 
-      const baseName = file.fullPath.replace(/\.[^/.]+$/, "");
-      const outputPath = `${baseName}.${track.language}.srt`;
-
-      console.log("Paths:", {
-        baseName,
-        outputPath,
-        fullPath: file.fullPath,
-        language: track.language,
-        codec: codecName,
-      });
-
-      const isBitmapSubtitle =
-        codecName === "hdmv_pgs_subtitle" || codecName === "dvd_subtitle";
-
-      if (isBitmapSubtitle) {
-        await extractBitmapSubtitle(file, track, outputPath);
-      } else {
-        await extractTextSubtitle(file, track, outputPath);
+      if (isUnsupportedSubtitleCodec(codecName)) {
+        toast.error("This subtitle format is not supported for extraction", {
+          id: toastId,
+        });
+        return;
       }
 
-      file.showSubtitleInfo = false;
-      setRootFiles([...rootFiles]);
-
-      toast.success(`Subtitle extracted successfully!`, {
+      const outputPath =
+        file.fullPath.replace(/\.[^/.]+$/, "") + `_${track.index}.srt`;
+      await extractSubtitle(file, track, outputPath);
+      toast.success("Subtitle extracted successfully", {
         id: toastId,
       });
     } catch (error) {
       console.error("Error extracting subtitle:", error);
-      toast.error(`Error extracting subtitle: ${error}`, {
+      toast.error("Failed to extract subtitle", {
         id: toastId,
       });
     }
@@ -668,7 +651,7 @@ export const FileProvider: React.FC<{ children: React.ReactNode }> = ({
     toggleSubtitleInfo,
     toggleFileSelection,
     handleFolderClick,
-    extractSubtitle,
+    handleExtractSubtitle,
     translateSubtitle,
   };
 

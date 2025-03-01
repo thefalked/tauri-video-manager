@@ -1,5 +1,5 @@
-import { FileWithPath } from "../context/FileContext";
 import { FileListItem } from "./FileListItem";
+import { FileWithPath } from "../types";
 
 interface FileListProps {
   files: FileWithPath[];

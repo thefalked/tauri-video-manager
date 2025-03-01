@@ -8,10 +8,10 @@ import {
   ChevronUp,
   Languages,
 } from "lucide-react";
-import { FileWithPath, useFileContext } from "../context/FileContext";
+import { useFileContext } from "../context/FileContext";
 import { FileList } from "./FileList";
 import { useState } from "react";
-
+import { FileWithPath } from "../types";
 interface SubtitleFile {
   name: string | undefined;
   language: string;
@@ -33,7 +33,7 @@ export const FileListItem = ({ file, level }: FileListItemProps) => {
     handleDeleteSubtitle,
     handleFolderConvert,
     toggleSubtitleInfo,
-    extractSubtitle,
+    handleExtractSubtitle,
     isBatchConverting,
     conversionStatus,
     expandedFolders,
@@ -193,10 +193,10 @@ export const FileListItem = ({ file, level }: FileListItemProps) => {
                   {file.subtitleTracks?.map((track) => (
                     <div
                       key={track.index}
-                      className="flex items-center justify-between py-1 hover:bg-gray-700/50 rounded px-2 group"
+                      className="flex items-center justify-between py-1 hover:bg-gray-700/50 rounded px-2 group cursor-pointer"
                       onClick={async (e) => {
                         e.stopPropagation();
-                        await extractSubtitle(file, track);
+                        await handleExtractSubtitle(file, track);
                       }}
                     >
                       <span>
@@ -204,6 +204,10 @@ export const FileListItem = ({ file, level }: FileListItemProps) => {
                       </span>
                     </div>
                   ))}
+                  {(!file.subtitleTracks ||
+                    file.subtitleTracks.length === 0) && (
+                    <div className="text-gray-400">No subtitles found</div>
+                  )}
                 </div>
               )}
             </div>
