@@ -1,17 +1,7 @@
 import { createContext, useContext, useState, useEffect } from "react";
-import {
-  readDir,
-  type DirEntry,
-  remove,
-  readTextFile,
-  writeTextFile,
-  watchImmediate,
-} from "@tauri-apps/plugin-fs";
-import { join } from "@tauri-apps/api/path";
+import { watchImmediate } from "@tauri-apps/plugin-fs";
 import { load } from "@tauri-apps/plugin-store";
-import { Command } from "@tauri-apps/plugin-shell";
 import { toast } from "sonner";
-import { Ollama } from "ollama";
 import {
   FileWithPath,
   SubtitleTrack,
@@ -24,9 +14,20 @@ import {
   extractSubtitle,
   isUnsupportedSubtitleCodec,
 } from "../utils/ffmpeg";
-
-// Initialize Ollama client
-const ollama = new Ollama({ host: "http://localhost:11434" });
+import {
+  listFolderContents,
+  deleteFile,
+  readSubtitleFile,
+  writeTranslatedFile,
+} from "./fileOperations";
+import { handleConvert } from "./conversionOperations";
+import {
+  checkOllamaServer,
+  parseSubtitleContent,
+  translateBatch,
+  updateEntriesWithTranslations,
+  formatTranslatedContent,
+} from "./translationOperations";
 
 const FileContext = createContext<FileContextType | undefined>(undefined);
 
@@ -44,58 +45,9 @@ export const FileProvider: React.FC<{ children: React.ReactNode }> = ({
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [isBatchConverting, setIsBatchConverting] = useState(false);
 
-  const checkForMP4 = async (mkvPath: string): Promise<boolean> => {
-    const mp4Path = mkvPath.replace(".mkv", ".mp4");
-    try {
-      const entries = await readDir(
-        mkvPath.substring(0, mkvPath.lastIndexOf("/"))
-      );
-      return entries.some((entry) => entry.name === mp4Path.split("/").pop());
-    } catch (error) {
-      console.error("Error checking for MP4:", error);
-      return false;
-    }
-  };
-
-  const addPathsToEntries = async (
-    entries: DirEntry[],
-    parentPath: string
-  ): Promise<FileWithPath[]> => {
-    const result: FileWithPath[] = [];
-    for (const entry of entries) {
-      const fullPath = await join(parentPath, entry.name || "");
-      const hasMP4 = entry.name?.toLowerCase().endsWith(".mkv")
-        ? await checkForMP4(fullPath)
-        : false;
-      result.push({ ...entry, fullPath, hasMP4 });
-    }
-    return result;
-  };
-
-  const listFolderContents = async (path: string): Promise<FileWithPath[]> => {
-    try {
-      const entries = await readDir(path);
-      // Add paths to all entries for subtitle tracking
-      const allEntries = await addPathsToEntries(entries, path);
-
-      // Filter and sort entries
-      const sortedEntries = allEntries.sort((a, b) => {
-        if (a.isDirectory && !b.isDirectory) return -1;
-        if (!a.isDirectory && b.isDirectory) return 1;
-        return (a.name || "").localeCompare(b.name || "");
-      });
-
-      return sortedEntries;
-    } catch (error) {
-      console.error("Error reading directory:", error);
-      return [];
-    }
-  };
-
   const listFiles = async (path: string): Promise<FileWithPath[]> => {
     try {
       const entries = await listFolderContents(path);
-      // Update root files state
       setRootFiles(entries);
       return entries;
     } catch (error) {
@@ -104,9 +56,7 @@ export const FileProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
-  const handleConvert = async (file: FileWithPath) => {
-    if (!file.name) return;
-
+  const handleConvertFile = async (file: FileWithPath) => {
     const toastId = toast.loading(`Converting ${file.name}...`);
 
     try {
@@ -134,73 +84,24 @@ export const FileProvider: React.FC<{ children: React.ReactNode }> = ({
         [file.fullPath]: "Converting...",
       }));
 
-      const mp4File = file.fullPath.replace(".mkv", ".mp4");
+      await handleConvert(file, (progress) => {
+        const updateProgress = (files: FileWithPath[]) => {
+          return files.map((f) =>
+            f.fullPath === file.fullPath ? { ...f, progress } : f
+          );
+        };
 
-      // First, convert video and audio only
-      const command = Command.create("ffmpeg-convert", [
-        "-i",
-        file.fullPath,
-        "-map",
-        "0:v", // Map video streams
-        "-map",
-        "0:a", // Map audio streams
-        "-c:v",
-        "copy",
-        "-c:a",
-        "copy",
-        "-strict",
-        "unofficial",
-        mp4File,
-      ]);
-
-      let duration: number | null = null;
-
-      command.stdout.on("data", (line: string) => {
-        if (line.startsWith("Duration:")) {
-          const timeMatch = line.match(/Duration: (\d{2}):(\d{2}):(\d{2})/);
-          if (timeMatch) {
-            duration =
-              parseInt(timeMatch[1]) * 3600 +
-              parseInt(timeMatch[2]) * 60 +
-              parseInt(timeMatch[3]);
-          }
-        } else if (line.startsWith("time=") && duration) {
-          const timeMatch = line.match(/time=(\d{2}):(\d{2}):(\d{2})/);
-          if (timeMatch) {
-            const currentTime =
-              parseInt(timeMatch[1]) * 3600 +
-              parseInt(timeMatch[2]) * 60 +
-              parseInt(timeMatch[3]);
-            const progress = Math.round((currentTime / duration) * 100);
-
-            const updateProgress = (files: FileWithPath[]) => {
-              return files.map((f) =>
-                f.fullPath === file.fullPath ? { ...f, progress } : f
-              );
-            };
-
-            setRootFiles((prev) => updateProgress(prev));
-            Object.keys(expandedFolders).forEach((key) => {
-              setExpandedFolders((prev) => ({
-                ...prev,
-                [key]: {
-                  ...prev[key],
-                  files: updateProgress(prev[key].files),
-                },
-              }));
-            });
-          }
-        }
+        setRootFiles((prev) => updateProgress(prev));
+        Object.keys(expandedFolders).forEach((key) => {
+          setExpandedFolders((prev) => ({
+            ...prev,
+            [key]: {
+              ...prev[key],
+              files: updateProgress(prev[key].files),
+            },
+          }));
+        });
       });
-
-      const output = await command.execute();
-
-      if (
-        (!output.code && output.stderr.includes("Error")) ||
-        output.stderr.includes("Invalid")
-      ) {
-        throw new Error(output.stderr);
-      }
 
       setConversionStatus((prev) => ({
         ...prev,
@@ -259,7 +160,7 @@ export const FileProvider: React.FC<{ children: React.ReactNode }> = ({
         .filter((f): f is FileWithPath => f !== undefined);
 
       for (const file of filesToConvert) {
-        await handleConvert(file);
+        await handleConvertFile(file);
       }
 
       toast.success(`Batch conversion completed!`, {
@@ -300,7 +201,7 @@ export const FileProvider: React.FC<{ children: React.ReactNode }> = ({
 
       const mkvFiles = await getAllMkvFiles(folderPath);
       for (const file of mkvFiles) {
-        await handleConvert(file);
+        await handleConvertFile(file);
       }
 
       toast.success("Folder conversion completed!", {
@@ -317,8 +218,10 @@ export const FileProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const handleDeleteMKV = async (file: FileWithPath) => {
     try {
-      await remove(file.fullPath);
-      toast.success("MKV file deleted successfully!");
+      const success = await deleteFile(file);
+      if (success) {
+        toast.success("MKV file deleted successfully!");
+      }
     } catch (error) {
       console.error("Error deleting MKV file:", error);
       toast.error(`Error deleting MKV file: ${error}`);
@@ -327,8 +230,10 @@ export const FileProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const handleDeleteSubtitle = async (file: FileWithPath) => {
     try {
-      await remove(file.fullPath);
-      toast.success(`Subtitle file deleted successfully: ${file.name}`);
+      const success = await deleteFile(file);
+      if (success) {
+        toast.success(`Subtitle file deleted successfully: ${file.name}`);
+      }
     } catch (error) {
       console.error("Error deleting subtitle file:", error);
       toast.error(`Error deleting subtitle file: ${error}`);
@@ -337,11 +242,11 @@ export const FileProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const toggleSubtitleInfo = async (file: FileWithPath) => {
     try {
-      if (!file.subtitleInfo) {
-        file.subtitleInfo = await getSubtitleInfo(file);
+      if (!file.subtitleTracks) {
+        await getSubtitleInfo(file);
       }
       file.showSubtitleInfo = !file.showSubtitleInfo;
-      setRootFiles([...rootFiles]); // Force re-render
+      setRootFiles([...rootFiles]);
     } catch (error) {
       console.error("Error toggling subtitle info:", error);
       toast.error("Error getting subtitle information");
@@ -397,8 +302,7 @@ export const FileProvider: React.FC<{ children: React.ReactNode }> = ({
         return;
       }
 
-      const outputPath =
-        file.fullPath.replace(/\.[^/.]+$/, "") + `_${track.index}.srt`;
+      const outputPath = `${file.fullPath.replace(/\.[^/.]+$/, "")}.srt`;
       await extractSubtitle(file, track, outputPath);
       toast.success("Subtitle extracted successfully", {
         id: toastId,
@@ -426,125 +330,102 @@ export const FileProvider: React.FC<{ children: React.ReactNode }> = ({
     );
 
     try {
-      // Check if Ollama server is running
       const isServerRunning = await checkOllamaServer();
       if (!isServerRunning) {
-        toast.error(
-          "Ollama server is not running. Please start it and try again.",
-          { id: toastId }
+        throw new Error(
+          "Ollama server is not running. Please start it and try again."
         );
-        return;
       }
 
-      // Read the subtitle file
-      const content = await readTextFile(subtitlePath);
+      const content = await readSubtitleFile(subtitlePath);
+      const subtitleEntries = parseSubtitleContent(content);
 
-      // Split content into chunks and group them into batches of 20
-      const chunks = content.split("\n\n");
-      const batchSize = 20;
-      let translatedContent = "";
+      if (subtitleEntries.length === 0) {
+        throw new Error("No valid subtitle entries found in file");
+      }
 
-      // Initialize conversation with system message
-      const messages = [
-        {
-          role: "system",
-          content:
-            "You are a professional subtitle translator. Translate subtitles to Brazilian Portuguese while preserving all numbers, timestamps, and formatting exactly as they are. Maintain consistent translation of repeated phrases and names throughout the entire subtitle file.",
-        },
-      ];
+      const batchSize = 50;
+      const totalBatches = Math.ceil(subtitleEntries.length / batchSize);
 
-      // Process chunks in batches
-      for (let i = 0; i < chunks.length; i += batchSize) {
-        const batch = chunks.slice(i, i + batchSize);
-        if (!batch.some((chunk) => chunk.trim())) continue;
+      for (let i = 0; i < subtitleEntries.length; i += batchSize) {
+        const batch = subtitleEntries.slice(i, i + batchSize);
+        const batchNumber = Math.floor(i / batchSize) + 1;
 
         toast.loading(
-          `Translating subtitle... ${Math.round(
-            ((i + batch.length) / chunks.length) * 100
-          )}%`,
+          `Translating subtitle... Batch ${batchNumber}/${totalBatches} (${Math.round(
+            ((i + batch.length) / subtitleEntries.length) * 100
+          )}%)`,
           {
             id: toastId,
-            action: {
-              label: "Cancel",
-              onClick: () => {
-                toast.dismiss(toastId);
-                throw new Error("Translation cancelled by user");
-              },
-            },
           }
         );
 
         try {
-          console.log("Translating batch:", { batch, translatedContent });
-          // Add the current batch to translate
-          messages.push({
-            role: "user",
-            content: `Translate these subtitle segments to Brazilian Portuguese. Keep all numbers and timestamps exactly as they are:\n\n${batch.join(
-              "\n\n"
-            )}`,
-          });
+          const translations = await translateBatch(batch, batchNumber);
+          updateEntriesWithTranslations(batch, translations.translations);
 
-          const response = await ollama.chat({
-            model: "deepseek-r1:14b",
-            messages,
-            stream: false,
-          });
-
-          // Add the assistant's response to the conversation history
-          messages.push({
-            role: "assistant",
-            content: response.message.content,
-          });
-
-          translatedContent += response.message.content + "\n\n";
+          if (i + batchSize < subtitleEntries.length) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
         } catch (error: any) {
-          console.error(
-            `Error translating batch starting at chunk ${i + 1}:`,
-            error
+          throw new Error(
+            `Translation failed at batch ${batchNumber}: ${error.message}`
           );
-          toast.error(`Error translating subtitle: Failed at chunk ${i + 1}`, {
-            id: toastId,
-          });
-          return; // Stop translation on first error
         }
       }
 
-      // Create the translated file path
+      const missingTranslations = subtitleEntries.filter(
+        (entry) => !entry.translation
+      );
+      if (missingTranslations.length > 0) {
+        const missingBatches = new Map<number, typeof subtitleEntries>();
+        missingTranslations.forEach((entry) => {
+          const batchNumber = Math.floor((entry.index - 1) / batchSize);
+          if (!missingBatches.has(batchNumber)) {
+            missingBatches.set(batchNumber, []);
+          }
+          missingBatches.get(batchNumber)?.push(entry);
+        });
+
+        for (const [batchNumber, entries] of missingBatches) {
+          try {
+            const translations = await translateBatch(entries, batchNumber + 1);
+            updateEntriesWithTranslations(entries, translations.translations);
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          } catch (error: any) {
+            throw new Error(
+              `Translation failed at batch ${batchNumber + 1}: ${error.message}`
+            );
+          }
+        }
+
+        const stillMissing = subtitleEntries.filter(
+          (entry) => !entry.translation
+        );
+        if (stillMissing.length > 0) {
+          throw new Error(
+            `Still missing translations for ${stillMissing.length} entries after retries`
+          );
+        }
+      }
+
+      const translatedContent = formatTranslatedContent(subtitleEntries);
       const translatedPath = subtitlePath.replace(
         /\.[^/.]+\.srt$/,
         ".pt_br.srt"
       );
-
-      // Write the translated content
-      await writeTextFile(translatedPath, translatedContent.trim());
+      await writeTranslatedFile(translatedPath, translatedContent);
 
       toast.success("Subtitle translated successfully!", {
         id: toastId,
         description: `Saved as: ${translatedPath.split("/").pop()}`,
       });
     } catch (error: any) {
-      console.error("Error translating subtitle:", error);
-      if (error.message === "Translation cancelled by user") {
-        toast.error("Translation cancelled", { id: toastId });
-      } else {
-        toast.error(`Error translating subtitle: ${error}`, {
-          id: toastId,
-        });
-      }
+      toast.error(error.message || "Translation failed", { id: toastId });
+      throw error;
     }
   };
 
-  const checkOllamaServer = async (): Promise<boolean> => {
-    try {
-      await ollama.list();
-      return true;
-    } catch (error) {
-      console.error("Error connecting to Ollama server:", error);
-      return false;
-    }
-  };
-
-  // Load saved path on mount
   useEffect(() => {
     const loadSavedPath = async () => {
       try {
@@ -562,7 +443,6 @@ export const FileProvider: React.FC<{ children: React.ReactNode }> = ({
     loadSavedPath();
   }, []);
 
-  // Watch for file changes
   useEffect(() => {
     if (!selectedPath) return;
 
@@ -573,39 +453,20 @@ export const FileProvider: React.FC<{ children: React.ReactNode }> = ({
         const watcher = await watchImmediate(
           selectedPath,
           async () => {
-            // Store current state of expanded folders
             const expandedPaths = Object.keys(expandedFolders).filter(
               (path) => expandedFolders[path].isOpen
             );
 
-            // Refresh root files
-            const entries = await readDir(selectedPath);
-            const allFiles = await addPathsToEntries(entries, selectedPath);
-            const sortedFiles = allFiles.sort((a, b) => {
-              if (a.isDirectory && !b.isDirectory) return -1;
-              if (!a.isDirectory && b.isDirectory) return 1;
-              return (a.name || "").localeCompare(b.name || "");
-            });
-            setRootFiles(sortedFiles);
+            const entries = await listFolderContents(selectedPath);
+            setRootFiles(entries);
 
-            // Refresh all expanded folders
             for (const folderPath of expandedPaths) {
-              const folderEntries = await readDir(folderPath);
-              const folderFiles = await addPathsToEntries(
-                folderEntries,
-                folderPath
-              );
-              const sortedFolderFiles = folderFiles.sort((a, b) => {
-                if (a.isDirectory && !b.isDirectory) return -1;
-                if (!a.isDirectory && b.isDirectory) return 1;
-                return (a.name || "").localeCompare(b.name || "");
-              });
-
+              const folderEntries = await listFolderContents(folderPath);
               setExpandedFolders((prev) => ({
                 ...prev,
                 [folderPath]: {
                   ...prev[folderPath],
-                  files: sortedFolderFiles,
+                  files: folderEntries,
                 },
               }));
             }
@@ -621,7 +482,6 @@ export const FileProvider: React.FC<{ children: React.ReactNode }> = ({
 
     setupWatcher();
 
-    // Cleanup watcher when path changes or component unmounts
     return () => {
       if (stopWatching) {
         stopWatching();
@@ -643,7 +503,7 @@ export const FileProvider: React.FC<{ children: React.ReactNode }> = ({
     isBatchConverting,
     setIsBatchConverting,
     listFiles,
-    handleConvert,
+    handleConvert: handleConvertFile,
     handleBatchConvert,
     handleFolderConvert,
     handleDeleteMKV,

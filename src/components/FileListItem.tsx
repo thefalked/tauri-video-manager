@@ -12,6 +12,7 @@ import { useFileContext } from "../context/FileContext";
 import { FileList } from "./FileList";
 import { useState } from "react";
 import { FileWithPath } from "../types";
+
 interface SubtitleFile {
   name: string | undefined;
   language: string;
@@ -303,11 +304,12 @@ export const FileListItem = ({ file, level }: FileListItemProps) => {
                   sub.language.toLowerCase()
                 ) && (
                   <button
-                    onClick={async (e) => {
+                    onClick={(e) => {
                       e.stopPropagation();
                       const baseName = file.fullPath.replace(/\.[^/.]+$/, "");
-                      const subtitlePath = `${baseName}.${sub.language}.srt`;
-                      await translateSubtitle(subtitlePath);
+                      const subtitlePath = `${baseName}.srt`;
+
+                      translateSubtitle(subtitlePath);
                     }}
                     className="opacity-0 group-hover:opacity-100 px-2 py-0.5 bg-purple-600 hover:bg-purple-700 text-white rounded transition-all cursor-pointer"
                     title="Translate to Brazilian Portuguese"
